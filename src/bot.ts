@@ -1,6 +1,6 @@
-import axios from "axios";
-import { ChatInputCommandInteraction, Client, CommandInteraction, IntentsBitField, Interaction } from 'discord.js';
+import { ChatInputCommandInteraction, Client, IntentsBitField, Interaction } from 'discord.js';
 import { F1ScheduleBotCommand, setCommands } from "./commands.js";
+import * as api from "./api/index.js";
 
 const client = new Client({intents: [IntentsBitField.Flags.Guilds, IntentsBitField.Flags.GuildMessages]});
 
@@ -35,6 +35,18 @@ client.on('interactionCreate', async (interaction: Interaction) => {
             return;
         }
 
+        if(commandInteraction.commandName === F1ScheduleBotCommand.DRIVER_STANDINGS){
+            const driverStandingsString = await getDriverStandingsString();
+            await interaction.reply(driverStandingsString);
+            return;
+        }
+
+        if(commandInteraction.commandName === F1ScheduleBotCommand.CONSTRUCTOR_STANDINGS){
+            const constructorStandingsString = await getConstructorStandingsString();
+            await interaction.reply(constructorStandingsString);
+            return;
+        }
+
         await interaction.reply("Something went wrong");
         return;
     }
@@ -43,20 +55,10 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 client.login(process.env.BOT_TOKEN);
 
 const getNextRaceString = async () => {
-    const response = await axios.get("http://ergast.com/api/f1/current.json")
-    const races = response.data.MRData.RaceTable.Races;
+    const nextRace = await api.getNextRace();
 
-    const now = new Date();
-    let nextRace: any;
-
-    for (let i = 0; i < races.length; i++) {
-        const race = races[i];
-        const raceDate = new Date(`${race.date} ${race.time}`);
-
-        if(raceDate > now){
-            nextRace = race;
-            break;
-        }
+    if(nextRace === undefined){
+        return "No race found";
     }
 
     const raceDate: any = new Date(`${nextRace.date} ${nextRace.time}`);
@@ -67,4 +69,46 @@ const getNextRaceString = async () => {
     return `The ${nextRace.raceName} starts at:\n${aestTime} AEST\n${nzTime} NZT`;
 }
 
+const getDriverStandingsString = async () => {
+    const driverStandings = await api.getCurrentSeasonDriverStandings();
 
+    let result = "";
+
+    result += `\`\`\`\n`;
+
+    result += "Pos  Pts  Driver\n";
+
+    for (let i = 0; i < driverStandings.length; i++) {
+        const driverStanding = driverStandings[i];
+
+        result += `${driverStanding.position.padStart(3, " ")}`;
+        result += `  ${driverStanding.points.padStart(3, " ")}`;
+        result += `  ${driverStanding.Driver.givenName} ${driverStanding.Driver.familyName}\n`;
+    }
+
+    result += `\`\`\``;
+
+    return result;
+}
+
+const getConstructorStandingsString = async () => {
+    const constructorStandings = await api.getCurrentSeasonConstructorStandings();
+
+    let result = "";
+
+    result += `\`\`\`\n`;
+
+    result += "Pos  Pts  Constructor\n";
+
+    for (let i = 0; i < constructorStandings.length; i++) {
+        const constructorStanding = constructorStandings[i];
+
+        result += `${constructorStanding.position.padStart(3, " ")}`;
+        result += `  ${constructorStanding.points.padStart(3, " ")}`;
+        result += `  ${constructorStanding.Constructor.name}\n`;
+    }
+
+    result += `\`\`\``;
+
+    return result;
+}
