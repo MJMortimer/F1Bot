@@ -4,6 +4,7 @@ export enum F1ScheduleBotCommand {
     NEXT_RACE = "nextrace",
     DRIVER_STANDINGS = "driverstandings",
     CONSTRUCTOR_STANDINGS = "constructorstandings",
+    RESULT = "result"
 }
 
 export const setCommands = (guild: Guild) => {
@@ -20,6 +21,10 @@ export const setCommands = (guild: Guild) => {
         {
             name: F1ScheduleBotCommand.CONSTRUCTOR_STANDINGS,
             description: "Will list out the current constructor standings"
+        },
+        {
+            name: F1ScheduleBotCommand.RESULT,
+            description: "Will list out the results of the last race"
         },
     ]);
 }

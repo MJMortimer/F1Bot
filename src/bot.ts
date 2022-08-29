@@ -1,6 +1,7 @@
-import { ChatInputCommandInteraction, Client, IntentsBitField, Interaction } from 'discord.js';
+import { ChatInputCommandInteraction, Client, Embed, IntentsBitField, Interaction } from 'discord.js';
 import { F1ScheduleBotCommand, setCommands } from "./commands.js";
 import * as api from "./api/index.js";
+import table from "text-table";
 
 const client = new Client({intents: [IntentsBitField.Flags.Guilds, IntentsBitField.Flags.GuildMessages]});
 
@@ -36,14 +37,20 @@ client.on('interactionCreate', async (interaction: Interaction) => {
         }
 
         if(commandInteraction.commandName === F1ScheduleBotCommand.DRIVER_STANDINGS){
-            const driverStandingsString = await getDriverStandingsString();
-            await interaction.reply(driverStandingsString);
+            const driverStandingsTable = await getDriverStandingsTable();
+            await interaction.reply(driverStandingsTable);
             return;
         }
 
         if(commandInteraction.commandName === F1ScheduleBotCommand.CONSTRUCTOR_STANDINGS){
-            const constructorStandingsString = await getConstructorStandingsString();
-            await interaction.reply(constructorStandingsString);
+            const constructorStandingsTable = await getConstructorStandingsTable();
+            await interaction.reply(constructorStandingsTable);
+            return;
+        }
+
+        if(commandInteraction.commandName === F1ScheduleBotCommand.RESULT){
+            const raceResultTable = await getLastRaceResultTable();
+            await interaction.reply(raceResultTable);
             return;
         }
 
@@ -69,46 +76,87 @@ const getNextRaceString = async () => {
     return `The ${nextRace.raceName} starts at:\n${aestTime} AEST\n${nzTime} NZT`;
 }
 
-const getDriverStandingsString = async () => {
+const getDriverStandingsTable = async () => {
     const driverStandings = await api.getCurrentSeasonDriverStandings();
 
-    let result = "";
-
-    result += `\`\`\`\n`;
-
-    result += "Pos  Pts  Driver\n";
+    const tableEntries = [["Pos", "Pts", "Driver"]];
 
     for (let i = 0; i < driverStandings.length; i++) {
         const driverStanding = driverStandings[i];
-
-        result += `${driverStanding.position.padStart(3, " ")}`;
-        result += `  ${driverStanding.points.padStart(3, " ")}`;
-        result += `  ${driverStanding.Driver.givenName} ${driverStanding.Driver.familyName}\n`;
+        tableEntries.push([driverStanding.position, driverStanding.points, `${driverStanding.Driver.givenName} ${driverStanding.Driver.familyName}`]);
     }
 
-    result += `\`\`\``;
+    const tableData = table(tableEntries, {align:['r', 'r', 'l']});
 
-    return result;
+    return (
+`\`\`\`
+${tableData}
+\`\`\``
+    );
 }
 
-const getConstructorStandingsString = async () => {
+const getConstructorStandingsTable = async () => {
     const constructorStandings = await api.getCurrentSeasonConstructorStandings();
 
-    let result = "";
-
-    result += `\`\`\`\n`;
-
-    result += "Pos  Pts  Constructor\n";
+    const tableEntries = [["Pos", "Pts", "Constructor"]];
 
     for (let i = 0; i < constructorStandings.length; i++) {
         const constructorStanding = constructorStandings[i];
-
-        result += `${constructorStanding.position.padStart(3, " ")}`;
-        result += `  ${constructorStanding.points.padStart(3, " ")}`;
-        result += `  ${constructorStanding.Constructor.name}\n`;
+        tableEntries.push([constructorStanding.position, constructorStanding.points, constructorStanding.Constructor.name]);
     }
 
-    result += `\`\`\``;
+    const tableData = table(tableEntries, {align:['r', 'r', 'l']});
 
-    return result;
+    return (
+`\`\`\`
+${tableData}
+\`\`\``
+    );
+}
+
+const getLastRaceResultTable = async () => {
+    const raceResults = await api.getLastRaceResult();
+
+    const tableEntries = [["Pos", "Pts", "Driver", "Time", "Gained/Lost", "Fastest Lap"]];
+
+    for (let i = 0; i < raceResults.length; i++) {
+        const raceResult = raceResults[i];
+
+        // Calculate the postions gained / lost
+        const posChange = parseInt(raceResult.grid) - parseInt(raceResult.position);
+        let posChangeString = "";
+
+        switch(true) {
+            case(posChange > 0):
+                posChangeString = `+${posChange}`;
+                break;
+            case(posChange < 0):
+                posChangeString = `${posChange}`;
+                break;
+            default:
+                posChangeString = "--";
+                break;
+        }
+
+        // Figure out the finish time to display
+
+        let finishTime = raceResult.Time?.time;
+        if(!finishTime && raceResult.position === raceResult.positionText){
+            finishTime = raceResult.status;
+        } 
+        else if (!finishTime && raceResult.position !== raceResult.positionText){
+            finishTime = "---"
+        }
+
+
+        tableEntries.push([raceResult.positionText, raceResult.points, `${raceResult.Driver.givenName} ${raceResult.Driver.familyName}`, finishTime, posChangeString, raceResult.FastestLap?.Time?.time ?? "---"]);
+    }
+
+    const tableData = table(tableEntries, {align:['r', 'r', 'l', 'r', 'r', 'r']});
+
+    return (
+`\`\`\`
+${tableData}
+\`\`\``
+    );
 }
