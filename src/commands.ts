@@ -1,10 +1,15 @@
-import { Guild } from "discord.js";
+import { ApplicationCommandOptionType, Guild } from "discord.js";
 
 export enum F1ScheduleBotCommand {
     NEXT_RACE = "nextrace",
     DRIVER_STANDINGS = "driverstandings",
     CONSTRUCTOR_STANDINGS = "constructorstandings",
-    RESULT = "result"
+    RACE_RESULT = "raceresult"
+}
+
+export enum RaceResultOptions {
+    YEAR = "year",
+    ROUND = "round"
 }
 
 export const setCommands = (guild: Guild) => {
@@ -23,8 +28,22 @@ export const setCommands = (guild: Guild) => {
             description: "Will list out the current constructor standings"
         },
         {
-            name: F1ScheduleBotCommand.RESULT,
-            description: "Will list out the results of the last race"
+            name: F1ScheduleBotCommand.RACE_RESULT,
+            description: "Will list out the results of the last race",
+            options: [
+                {
+                    name: RaceResultOptions.YEAR,
+                    description:"[OPTIONAL] The year the race was held. Defaults to current.",
+                    type: ApplicationCommandOptionType.String,
+                    required: false                    
+                },
+                {
+                    name: RaceResultOptions.ROUND,
+                    description:"[OPTIONAL] The round the race was held. Defaults to last.",
+                    type: ApplicationCommandOptionType.String,
+                    required: false
+                }
+            ]
         },
     ]);
 }

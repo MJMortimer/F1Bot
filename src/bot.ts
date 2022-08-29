@@ -1,5 +1,5 @@
 import { ChatInputCommandInteraction, Client, Embed, IntentsBitField, Interaction } from 'discord.js';
-import { F1ScheduleBotCommand, setCommands } from "./commands.js";
+import { F1ScheduleBotCommand, RaceResultOptions, setCommands } from "./commands.js";
 import * as api from "./api/index.js";
 import table from "text-table";
 
@@ -48,8 +48,33 @@ client.on('interactionCreate', async (interaction: Interaction) => {
             return;
         }
 
-        if(commandInteraction.commandName === F1ScheduleBotCommand.RESULT){
-            const raceResultTable = await getLastRaceResultTable();
+        if(commandInteraction.commandName === F1ScheduleBotCommand.RACE_RESULT){
+            // TODO: Refactor to DRY up the conversion and defaulting
+
+            // Figure out year option
+            let yearValue = "current";
+
+            let year = commandInteraction.options.get(RaceResultOptions.YEAR);
+            if(year?.value && (year.value as string).toLowerCase() !== "current"){
+                const yearNum = Number(year.value);
+                if(!isNaN(yearNum)){
+                    yearValue = year.value as string;
+                }
+            }
+
+            // Figure out round option
+            let roundValue = "last";
+            
+            let round = commandInteraction.options.get(RaceResultOptions.ROUND);
+
+            if(round?.value && (round.value as string).toLowerCase() !== "last"){
+                const roundNum = Number(round.value);
+                if(!isNaN(roundNum)){
+                    roundValue = round.value as string;
+                }
+            }
+
+            const raceResultTable = await getRaceResultTable(yearValue, roundValue);
             await interaction.reply(raceResultTable);
             return;
         }
@@ -114,19 +139,31 @@ ${tableData}
     );
 }
 
-const getLastRaceResultTable = async () => {
-    const raceResults = await api.getLastRaceResult();
+const getRaceResultTable = async (year: string, round: string) => {
+    const raceResult = await api.getRaceResult(year, round);
+    if(!raceResult?.Races || raceResult.Races.length === 0){
+        return "No race found";
+    }
 
-    const tableEntries = [["Pos", "Pts", "Driver", "Time", "Gained/Lost", "Fastest Lap"]];
+    const race = raceResult.Races[0];
 
-    for (let i = 0; i < raceResults.length; i++) {
-        const raceResult = raceResults[i];
+    const tableEntries = [["Pos", "Pts", "Driver", "Time/Status", "Gained/Lost", "Fastest Lap"]];
+
+    for (let i = 0; i < race.Results.length; i++) {
+        const result = race.Results[i];
 
         // Calculate the postions gained / lost
-        const posChange = parseInt(raceResult.grid) - parseInt(raceResult.position);
+        const gridPosition = Number(result.grid);
+        const finishingPosition = Number(result.position);
+
+        const posChange = gridPosition - finishingPosition;
+        
         let posChangeString = "";
 
         switch(true) {
+            case(gridPosition === 0):
+                posChangeString = "--"
+                break;
             case(posChange > 0):
                 posChangeString = `+${posChange}`;
                 break;
@@ -139,23 +176,17 @@ const getLastRaceResultTable = async () => {
         }
 
         // Figure out the finish time to display
+        let finishTime = result.Time?.time ?? result.status;
 
-        let finishTime = raceResult.Time?.time;
-        if(!finishTime && raceResult.position === raceResult.positionText){
-            finishTime = raceResult.status;
-        } 
-        else if (!finishTime && raceResult.position !== raceResult.positionText){
-            finishTime = "---"
-        }
-
-
-        tableEntries.push([raceResult.positionText, raceResult.points, `${raceResult.Driver.givenName} ${raceResult.Driver.familyName}`, finishTime, posChangeString, raceResult.FastestLap?.Time?.time ?? "---"]);
+        tableEntries.push([result.positionText, result.points, `${result.Driver.givenName} ${result.Driver.familyName}`, finishTime, posChangeString, result.FastestLap?.Time?.time ?? "---"]);
     }
 
     const tableData = table(tableEntries, {align:['r', 'r', 'l', 'r', 'r', 'r']});
 
     return (
 `\`\`\`
+${race.season}, Round ${race.round}, ${race.raceName}
+
 ${tableData}
 \`\`\``
     );
