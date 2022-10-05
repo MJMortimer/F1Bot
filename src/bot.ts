@@ -1,7 +1,9 @@
-import { ChatInputCommandInteraction, Client, Embed, IntentsBitField, Interaction } from 'discord.js';
-import { F1ScheduleBotCommand, RaceResultOptions, setCommands } from "./commands.js";
+import { ChatInputCommandInteraction, Client, Embed, EmbedBuilder, IntentsBitField, Interaction } from 'discord.js';
+import { F1ScheduleBotCommand, RaceResultOptions, SendOptions, setCommands } from "./commands.js";
 import * as api from "./api/index.js";
 import table from "text-table";
+import { toPng } from 'html-to-image';
+import { JSDOM as jsdom } from "jsdom";
 
 const client = new Client({intents: [IntentsBitField.Flags.Guilds, IntentsBitField.Flags.GuildMessages]});
 
@@ -29,22 +31,30 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 
     if(interaction.isChatInputCommand()){
         const commandInteraction = interaction as ChatInputCommandInteraction;
+        const sendToAll = commandInteraction.options.getBoolean(SendOptions.SENDTOALL, false) ?? false;
+        await commandInteraction.deferReply({ephemeral: !sendToAll});
 
         if(commandInteraction.commandName === F1ScheduleBotCommand.NEXT_RACE){
             const nextRaceString = await getNextRaceString();
-            await interaction.reply(nextRaceString);
+            await interaction.editReply({content: nextRaceString});
+            return;
+        }
+
+        if(commandInteraction.commandName === F1ScheduleBotCommand.NEXT_SESSION){
+            const nextSessionString = await getNextSessionString();
+            await interaction.editReply({content: nextSessionString});
             return;
         }
 
         if(commandInteraction.commandName === F1ScheduleBotCommand.DRIVER_STANDINGS){
             const driverStandingsTable = await getDriverStandingsTable();
-            await interaction.reply(driverStandingsTable);
+            await interaction.editReply({content: driverStandingsTable});
             return;
         }
 
         if(commandInteraction.commandName === F1ScheduleBotCommand.CONSTRUCTOR_STANDINGS){
             const constructorStandingsTable = await getConstructorStandingsTable();
-            await interaction.reply(constructorStandingsTable);
+            await interaction.editReply({content: constructorStandingsTable});
             return;
         }
 
@@ -75,11 +85,49 @@ client.on('interactionCreate', async (interaction: Interaction) => {
             }
 
             const raceResultTable = await getRaceResultTable(yearValue, roundValue);
-            await interaction.reply(raceResultTable);
+            await interaction.editReply({content: raceResultTable});
             return;
         }
 
-        await interaction.reply("Something went wrong");
+        if(commandInteraction.commandName === F1ScheduleBotCommand.SCHEDULE){
+            // TODO: Refactor to DRY up the conversion and defaulting
+
+            // Figure out year option
+            let yearValue = "current";
+
+            let year = commandInteraction.options.get(RaceResultOptions.YEAR);
+            if(year?.value && (year.value as string).toLowerCase() !== "current"){
+                const yearNum = Number(year.value);
+                if(!isNaN(yearNum)){
+                    yearValue = year.value as string;
+                }
+            }
+
+            // Figure out round option
+            let roundValue = "next";
+            
+            let round = commandInteraction.options.get(RaceResultOptions.ROUND);
+
+            if(round?.value && (round.value as string).toLowerCase() !== "next"){
+                const roundNum = Number(round.value);
+                if(!isNaN(roundNum)){
+                    roundValue = round.value as string;
+                }
+            }
+
+            const scheduleString = await getScheduleString(yearValue, roundValue);
+            await interaction.editReply({content: scheduleString});
+            return;
+        }
+
+        if(commandInteraction.commandName === F1ScheduleBotCommand.TEST){
+            const sendToAll = commandInteraction.options.getBoolean(SendOptions.SENDTOALL, false) ?? false;
+
+            await interaction.editReply({content: "A messsage just for you"});
+            return;
+        }
+
+        await interaction.editReply("Something went wrong");
         return;
     }
 });
@@ -87,18 +135,73 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 client.login(process.env.BOT_TOKEN);
 
 const getNextRaceString = async () => {
-    const nextRace = await api.getNextRace();
+    const nextRace = await api.getRace("current", "next");
 
     if(nextRace === undefined){
         return "No race found";
     }
 
-    const raceDate: any = new Date(`${nextRace.date} ${nextRace.time}`);
+    const raceDate: any = new Date(`${nextRace.date} ${nextRace.time}`);    
 
-    const aestTime = raceDate.toLocaleString("en-nz", {timeZone: "Australia/Sydney"});
-    const nzTime = raceDate.toLocaleString("en-nz", {timeZone: "Pacific/Auckland"});
+    return `The ${nextRace.raceName} starts at:\n${aest(raceDate)} AEST\n${nzt(raceDate)} NZT`;
+}
 
-    return `The ${nextRace.raceName} starts at:\n${aestTime} AEST\n${nzTime} NZT`;
+const getScheduleString = async (year: string, round: string) => {
+    const race = await api.getRace(year, round);
+
+    if(race === undefined){
+        return "No race found";
+    }
+
+    // Weekends with sprint races changes everything
+    if(race.Sprint){
+        const firstPracticeDate = new Date(`${race["FirstPractice"].date} ${race["FirstPractice"].time}`);
+        const qualifyingDate = new Date(`${race["Qualifying"].date} ${race["Qualifying"].time}`);
+        const secondPracticeDate = new Date(`${race["SecondPractice"].date} ${race["SecondPractice"].time}`);
+        const sprintDate = new Date(`${race["Sprint"].date} ${race["Sprint"].time}`);
+        const raceDate = new Date(`${race.date} ${race.time}`);
+
+        return (
+`
+The event is ${race.raceName}.
+  - ${sessionTimeString("First practice", firstPracticeDate)}.
+  - ${sessionTimeString("Qualifying", qualifyingDate)}.
+  - ${sessionTimeString("Second practice", secondPracticeDate)}.
+  - ${sessionTimeString("The sprint", sprintDate)}.
+  - ${sessionTimeString("The race", raceDate)}.
+`
+        );
+    }else{
+        const firstPracticeDate = new Date(`${race["FirstPractice"].date} ${race["FirstPractice"].time}`);
+        const secondPracticeDate = new Date(`${race["SecondPractice"].date} ${race["SecondPractice"].time}`);
+        const thirdPracticeDate = new Date(`${race["ThirdPractice"].date} ${race["ThirdPractice"].time}`);
+        const qualifyingDate = new Date(`${race["Qualifying"].date} ${race["Qualifying"].time}`);
+        const raceDate = new Date(`${race.date} ${race.time}`);
+
+        return (
+`
+The event is ${race.raceName}.
+  - ${sessionTimeString("First practice", firstPracticeDate)}.
+  - ${sessionTimeString("Second practice", secondPracticeDate)}.
+  - ${sessionTimeString("Third practice", thirdPracticeDate)}.
+  - ${sessionTimeString("Qualifying", qualifyingDate)}.
+  - ${sessionTimeString("The race", raceDate)}.
+`
+        );
+    }
+}
+
+const getNextSessionString = async () => {
+    const nextSession = await api.getNextSession();
+
+    if(!nextSession){
+        return "No session found";
+    }
+
+    const aestTime = nextSession.nextSessionTime.toLocaleString("en-nz", {timeZone: "Australia/Sydney"});
+    const nzTime = nextSession.nextSessionTime.toLocaleString("en-nz", {timeZone: "Pacific/Auckland"});
+
+    return `The next session is the ${nextSession.nextSessionName} for the ${nextSession.raceName} which starts at:\n${aestTime} AEST\n${nzTime} NZT`;
 }
 
 const getDriverStandingsTable = async () => {
@@ -147,7 +250,7 @@ const getRaceResultTable = async (year: string, round: string) => {
 
     const race = raceResult.Races[0];
 
-    const tableEntries = [["Pos", "Pts", "Driver", "Time/Status", "Gained/Lost", "Fastest Lap"]];
+    const tableEntries = [["Pos", "Pts", "Driver", "Time/Status", "+/-", "Best Lap"]];
 
     for (let i = 0; i < race.Results.length; i++) {
         const result = race.Results[i];
@@ -190,4 +293,16 @@ ${race.season}, Round ${race.round}, ${race.raceName}
 ${tableData}
 \`\`\``
     );
+}
+
+const aest = (date: Date) => {
+    return date.toLocaleString("en-nz", {timeZone: "Australia/Sydney"});
+}
+
+const nzt = (date: Date) => {
+    return date.toLocaleString("en-nz", {timeZone: "Pacific/Auckland"});
+}
+
+const sessionTimeString = (sessionName: string, date: Date) => {
+    return `${sessionName} is at at: ${aest(date)} AEST, ${nzt(date)} NZT`
 }
