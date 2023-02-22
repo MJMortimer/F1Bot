@@ -1,7 +1,6 @@
 import { ChatInputCommandInteraction, Client, AttachmentBuilder, IntentsBitField, Interaction } from 'discord.js';
 import { F1ScheduleBotCommand, RaceResultOptions, SendOptions, setCommands } from "./commands.js";
 import * as api from "./api/index.js";
-import table from "text-table";
 import Canvas from '@napi-rs/canvas';
 import dateFormat from 'dateformat';
 
@@ -91,8 +90,16 @@ client.on('interactionCreate', async (interaction: Interaction) => {
                 }
             }
 
-            const raceResultTable = await getRaceResultTable(yearValue, roundValue);
-            await interaction.editReply({content: raceResultTable});
+            const canvas = await getRaceResultCanvas(yearValue, roundValue);
+
+            if(!canvas){
+                await interaction.editReply("Something went wrong");
+                return;
+            }
+
+            const attachment = new AttachmentBuilder(await canvas.encode('png'), { name: 'raceresult.png' });
+
+            await interaction.editReply({files: [attachment]});
             return;
         }
 
@@ -136,17 +143,7 @@ client.on('interactionCreate', async (interaction: Interaction) => {
         }
 
         if(commandInteraction.commandName === F1ScheduleBotCommand.TEST){
-            const canvas = await getDriverStandingsCanvas();
-
-            if(!canvas){
-                await interaction.editReply("Something went wrong");
-                return;
-            }
-
-            const attachment = new AttachmentBuilder(await canvas.encode('png'), { name: 'test.png' });
-
-            await interaction.editReply({files: [attachment]});
-            return;            
+            
         }
 
         await interaction.editReply("Something went wrong");
@@ -297,57 +294,60 @@ const getDriverStandings = async () => {
     return standings;
 }
 
-const getRaceResultTable = async (year: string, round: string) => {
+const getRaceResult = async (year: string, round: string) => {
     const raceResult = await api.getRaceResult(year, round);
-    if(!raceResult?.Races || raceResult.Races.length === 0){
-        return "No race found";
+
+    if(!raceResult){
+        return null;
     }
 
-    const race = raceResult.Races[0];
+    const results = [];
 
-    const tableEntries = [["Pos", "Pts", "Driver", "Time/Status", "+/-", "Best Lap"]];
+    for (let i = 0; i < raceResult.Races[0].Results.length; i++) {
+        const driverResult = raceResult.Races[0].Results[i];
 
-    for (let i = 0; i < race.Results.length; i++) {
-        const result = race.Results[i];
+         // Calculate the postions gained / lost
+         const gridPosition = Number(driverResult.grid);
+         const finishingPosition = Number(driverResult.position);
+ 
+         const posChange = gridPosition - finishingPosition;
+         
+         let posChangeString = "";
+ 
+         switch(true) {
+             case(gridPosition === 0):
+                 posChangeString = "--"
+                 break;
+             case(posChange > 0):
+                 posChangeString = `+${posChange}`;
+                 break;
+             case(posChange < 0):
+                 posChangeString = `${posChange}`;
+                 break;
+             default:
+                 posChangeString = "--";
+                 break;
+         }
 
-        // Calculate the postions gained / lost
-        const gridPosition = Number(result.grid);
-        const finishingPosition = Number(result.position);
-
-        const posChange = gridPosition - finishingPosition;
-        
-        let posChangeString = "";
-
-        switch(true) {
-            case(gridPosition === 0):
-                posChangeString = "--"
-                break;
-            case(posChange > 0):
-                posChangeString = `+${posChange}`;
-                break;
-            case(posChange < 0):
-                posChangeString = `${posChange}`;
-                break;
-            default:
-                posChangeString = "--";
-                break;
-        }
-
-        // Figure out the finish time to display
-        let finishTime = result.Time?.time ?? result.status;
-
-        tableEntries.push([result.positionText, result.points, `${result.Driver.givenName} ${result.Driver.familyName}`, finishTime, posChangeString, result.FastestLap?.Time?.time ?? "---"]);
+        results.push({
+            position: driverResult.positionText,
+            positionChange: posChangeString,
+            points: driverResult.points,
+            finishTimeOrStatus: driverResult.Time?.time ?? driverResult.status,
+            fastestLap: driverResult.FastestLap?.Time?.time ?? "- - -",
+            driver: {
+                id: driverResult.Driver.driverId,
+                name: `${driverResult.Driver.givenName} ${driverResult.Driver.familyName}`
+            }
+        })
     }
 
-    const tableData = table(tableEntries, {align:['r', 'r', 'l', 'r', 'r', 'r']});
-
-    return (
-`\`\`\`
-${race.season}, Round ${race.round}, ${race.raceName}
-
-${tableData}
-\`\`\``
-    );
+    return {
+        season: raceResult.Races[0].season,
+        round: raceResult.Races[0].round,
+        raceName: raceResult.Races[0].raceName,
+        results: results
+    };
 }
 
 const getScheduleCanvas = async (year: string, round: string) => {
@@ -559,7 +559,7 @@ const getDriverStandingsCanvas = async () => {
     context.fillText("Pos", 180, headingY);
 
     context.textAlign = "left";
-    context.fillText("Constructor", 240, headingY);
+    context.fillText("Driver", 240, headingY);
 
     context.textAlign = "right";
     context.fillText("Pts", 755, headingY);
@@ -586,6 +586,88 @@ const getDriverStandingsCanvas = async () => {
         context.fillText(standing.points, 755, entrantY);
         context.fillText(pointGap, 895, entrantY);
         context.fillText(standing.wins, 1045, entrantY);
+    }
+
+    return canvas;
+}
+
+const getRaceResultCanvas = async (year: string, round: string) => {
+    const data = await getRaceResult(year, round);
+
+    if(!data){
+        return null;
+    }
+
+    const buffer = 20;
+    const titleSize = 50;
+    const titleSeparator = 20;
+    const headingSize = 40;
+    const headingSeparator = 15;
+    const entrantSize = 30;
+    const entrantSeparator = 10;
+
+    const canvasHeight = 
+        buffer +
+        titleSize +
+        titleSeparator +
+        headingSize +
+        headingSeparator +
+        (data.results.length * entrantSize) +
+        (data.results.length * entrantSeparator) +
+        buffer;
+
+    const canvas = Canvas.createCanvas(1550, canvasHeight);
+    const context = canvas.getContext('2d');
+    
+    const background = await Canvas.loadImage("build/images/bg.png");
+    context.drawImage(background, 0, 0, canvas.width, canvas.height);
+
+    const logo = await Canvas.loadImage("build/images/F1-logo.png");
+    context.drawImage(logo, (canvas.width - logo.width - buffer), 0); // There's already a bit of buffer built into the png, ignore it for the y value
+
+    // Draw the title
+    context.fillStyle = '#000000';
+    context.font = `${titleSize}px f1-bold`;
+    context.fillText(`${data.season} - Round ${data.round} - ${data.raceName}`, 20, buffer + titleSize);
+
+    const headingY = buffer + titleSize + titleSeparator + headingSize;
+
+    // Draw the headings
+    // Pos, Driver, Pts, Time/Status, +/-, Best Lap
+    context.font = `${headingSize}px f1-bold`;
+
+    context.textAlign = "right";
+    context.fillText("Pos", 180, headingY);
+
+    context.textAlign = "left";
+    context.fillText("Driver", 240, headingY);
+
+    context.textAlign = "right";
+    context.fillText("Pts", 755, headingY);
+    context.fillText("Time/Status", 1145, headingY);
+    context.fillText("+/-", 1255, headingY);
+    context.fillText("Best Lap", 1485, headingY);
+
+    // Draw the standings
+    context.fillStyle = '#FFFFFF';
+    context.font = `${headingSize}px f1-reg`;
+    
+    for (let i = 0; i < data.results.length; i++) {
+        const result = data.results[i];
+        
+        const entrantY = buffer + titleSize + titleSeparator + headingSize + headingSeparator + ((i + 1) * entrantSize) + (i * entrantSeparator);
+
+        context.textAlign = "right";
+        context.fillText(result.position, 180, entrantY);
+
+        context.textAlign = "left";
+        context.fillText(result.driver.name, 240, entrantY, 375);
+
+        context.textAlign = "right";
+        context.fillText(result.points, 755, entrantY);
+        context.fillText(result.finishTimeOrStatus, 1145, entrantY);
+        context.fillText(result.positionChange, 1255, entrantY);
+        context.fillText(result.fastestLap, 1485, entrantY);
     }
 
     return canvas;
