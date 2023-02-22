@@ -1,9 +1,12 @@
-import { ChatInputCommandInteraction, Client, Embed, EmbedBuilder, IntentsBitField, Interaction } from 'discord.js';
+import { ChatInputCommandInteraction, Client, AttachmentBuilder, IntentsBitField, Interaction } from 'discord.js';
 import { F1ScheduleBotCommand, RaceResultOptions, SendOptions, setCommands } from "./commands.js";
 import * as api from "./api/index.js";
 import table from "text-table";
-import { toPng } from 'html-to-image';
-import { JSDOM as jsdom } from "jsdom";
+import Canvas from '@napi-rs/canvas';
+import dateFormat from 'dateformat';
+
+Canvas.GlobalFonts.registerFromPath("build/fonts/Formula1-Regular.ttf", "f1-reg");
+Canvas.GlobalFonts.registerFromPath("build/fonts/Formula1-Bold.ttf", "f1-bold");
 
 const client = new Client({intents: [IntentsBitField.Flags.Guilds, IntentsBitField.Flags.GuildMessages]});
 
@@ -33,18 +36,6 @@ client.on('interactionCreate', async (interaction: Interaction) => {
         const commandInteraction = interaction as ChatInputCommandInteraction;
         const sendToAll = commandInteraction.options.getBoolean(SendOptions.SENDTOALL, false) ?? false;
         await commandInteraction.deferReply({ephemeral: !sendToAll});
-
-        if(commandInteraction.commandName === F1ScheduleBotCommand.NEXT_RACE){
-            const nextRaceString = await getNextRaceString();
-            await interaction.editReply({content: nextRaceString});
-            return;
-        }
-
-        if(commandInteraction.commandName === F1ScheduleBotCommand.NEXT_SESSION){
-            const nextSessionString = await getNextSessionString();
-            await interaction.editReply({content: nextSessionString});
-            return;
-        }
 
         if(commandInteraction.commandName === F1ScheduleBotCommand.DRIVER_STANDINGS){
             const driverStandingsTable = await getDriverStandingsTable();
@@ -115,16 +106,23 @@ client.on('interactionCreate', async (interaction: Interaction) => {
                 }
             }
 
-            const scheduleString = await getScheduleString(yearValue, roundValue);
-            await interaction.editReply({content: scheduleString});
+            const canvas = await getScheduleCanvas(yearValue, roundValue);
+
+            if(!canvas){
+                await interaction.editReply("Something went wrong");
+                return;
+            }
+
+            const attachment = new AttachmentBuilder(await canvas.encode('png'), { name: 'schedule.png' });
+
+            await interaction.editReply({files: [attachment]});
             return;
         }
 
         if(commandInteraction.commandName === F1ScheduleBotCommand.TEST){
-            const sendToAll = commandInteraction.options.getBoolean(SendOptions.SENDTOALL, false) ?? false;
+            
 
-            await interaction.editReply({content: "A messsage just for you"});
-            return;
+            
         }
 
         await interaction.editReply("Something went wrong");
@@ -134,74 +132,95 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 
 client.login(process.env.BOT_TOKEN);
 
-const getNextRaceString = async () => {
-    const nextRace = await api.getRace("current", "next");
-
-    if(nextRace === undefined){
-        return "No race found";
-    }
-
-    const raceDate: any = new Date(`${nextRace.date} ${nextRace.time}`);    
-
-    return `The ${nextRace.raceName} starts at:\n${aest(raceDate)} AEST\n${nzt(raceDate)} NZT`;
-}
-
-const getScheduleString = async (year: string, round: string) => {
+const getSchedule = async (year: string, round: string) => {
     const race = await api.getRace(year, round);
 
-    if(race === undefined){
-        return "No race found";
+    if(!race){
+        return null;
     }
 
-    // Weekends with sprint races changes everything
-    if(race.Sprint){
-        const firstPracticeDate = new Date(`${race["FirstPractice"].date} ${race["FirstPractice"].time}`);
-        const qualifyingDate = new Date(`${race["Qualifying"].date} ${race["Qualifying"].time}`);
-        const secondPracticeDate = new Date(`${race["SecondPractice"].date} ${race["SecondPractice"].time}`);
-        const sprintDate = new Date(`${race["Sprint"].date} ${race["Sprint"].time}`);
-        const raceDate = new Date(`${race.date} ${race.time}`);
+    const firstPracticeDateTimeUtc = new Date(`${race["FirstPractice"].date} ${race["FirstPractice"].time}`);
+    const secondPracticeDateTimeUtc = new Date(`${race["SecondPractice"].date} ${race["SecondPractice"].time}`);
+    const qualifyingDateTimeUtc = new Date(`${race["Qualifying"].date} ${race["Qualifying"].time}`);
+    const raceDateTimeUtc = new Date(`${race.date} ${race.time}`);
 
-        return (
-`
-The event is ${race.raceName}.
-  - ${sessionTimeString("First practice", firstPracticeDate)}.
-  - ${sessionTimeString("Qualifying", qualifyingDate)}.
-  - ${sessionTimeString("Second practice", secondPracticeDate)}.
-  - ${sessionTimeString("The sprint", sprintDate)}.
-  - ${sessionTimeString("The race", raceDate)}.
-`
-        );
-    }else{
-        const firstPracticeDate = new Date(`${race["FirstPractice"].date} ${race["FirstPractice"].time}`);
-        const secondPracticeDate = new Date(`${race["SecondPractice"].date} ${race["SecondPractice"].time}`);
-        const thirdPracticeDate = new Date(`${race["ThirdPractice"].date} ${race["ThirdPractice"].time}`);
-        const qualifyingDate = new Date(`${race["Qualifying"].date} ${race["Qualifying"].time}`);
-        const raceDate = new Date(`${race.date} ${race.time}`);
+    if(race.Sprint){        
+        const sprintDateTimeUtc = new Date(`${race["Sprint"].date} ${race["Sprint"].time}`);
 
-        return (
-`
-The event is ${race.raceName}.
-  - ${sessionTimeString("First practice", firstPracticeDate)}.
-  - ${sessionTimeString("Second practice", secondPracticeDate)}.
-  - ${sessionTimeString("Third practice", thirdPracticeDate)}.
-  - ${sessionTimeString("Qualifying", qualifyingDate)}.
-  - ${sessionTimeString("The race", raceDate)}.
-`
-        );
+        return {
+            raceName: race.raceName,
+            sessions: [
+                {
+                    sessionName: "First practice",
+                    utcDateTime: firstPracticeDateTimeUtc,
+                    sydneyDateTime: aest(firstPracticeDateTimeUtc),
+                    nzDateTime: nzt(firstPracticeDateTimeUtc)
+                },
+                {
+                    sessionName: "Qualifying",
+                    utcDateTime: qualifyingDateTimeUtc,
+                    sydneyDateTime: aest(qualifyingDateTimeUtc),
+                    nzDateTime: nzt(qualifyingDateTimeUtc)
+                },
+                {
+                    sessionName: "Second practice",
+                    utcDateTime: secondPracticeDateTimeUtc,
+                    sydneyDateTime: aest(secondPracticeDateTimeUtc),
+                    nzDateTime: nzt(secondPracticeDateTimeUtc)
+                },
+                {
+                    sessionName: "Sprint",
+                    utcDateTime: sprintDateTimeUtc,
+                    sydneyDateTime: aest(sprintDateTimeUtc),
+                    nzDateTime: nzt(sprintDateTimeUtc)
+                },
+                {
+                    sessionName: "Grand prix",
+                    utcDateTime: raceDateTimeUtc,
+                    sydneyDateTime: aest(raceDateTimeUtc),
+                    nzDateTime: nzt(raceDateTimeUtc)
+                }
+            ]
+        };
+    } else {
+        const thirdPracticeDateTimeUtc = new Date(`${race["ThirdPractice"].date} ${race["ThirdPractice"].time}`);
+
+        return {
+            raceName: race.raceName,
+            sessions: [
+                {
+                    sessionName: "First practice",
+                    utcDateTime: firstPracticeDateTimeUtc,
+                    sydneyDateTime: aest(firstPracticeDateTimeUtc),
+                    nzDateTime: nzt(firstPracticeDateTimeUtc)
+                },
+                {
+                    sessionName: "Second practice",
+                    utcDateTime: secondPracticeDateTimeUtc,
+                    sydneyDateTime: aest(secondPracticeDateTimeUtc),
+                    nzDateTime: nzt(secondPracticeDateTimeUtc)
+                },
+                {
+                    sessionName: "Third practice",
+                    utcDateTime: thirdPracticeDateTimeUtc,
+                    sydneyDateTime: aest(thirdPracticeDateTimeUtc),
+                    nzDateTime: nzt(thirdPracticeDateTimeUtc)
+                },
+                {
+                    sessionName: "Qualifying",
+                    utcDateTime: qualifyingDateTimeUtc,
+                    sydneyDateTime: aest(qualifyingDateTimeUtc),
+                    nzDateTime: nzt(qualifyingDateTimeUtc)
+                },
+                {
+                    sessionName: "Grand prix",
+                    utcDateTime: raceDateTimeUtc,
+                    sydneyDateTime: aest(raceDateTimeUtc),
+                    nzDateTime: nzt(raceDateTimeUtc)
+                }
+            ]
+        };
     }
-}
-
-const getNextSessionString = async () => {
-    const nextSession = await api.getNextSession();
-
-    if(!nextSession){
-        return "No session found";
-    }
-
-    const aestTime = nextSession.nextSessionTime.toLocaleString("en-nz", {timeZone: "Australia/Sydney"});
-    const nzTime = nextSession.nextSessionTime.toLocaleString("en-nz", {timeZone: "Pacific/Auckland"});
-
-    return `The next session is the ${nextSession.nextSessionName} for the ${nextSession.raceName} which starts at:\n${aestTime} AEST\n${nzTime} NZT`;
 }
 
 const getDriverStandingsTable = async () => {
@@ -295,14 +314,91 @@ ${tableData}
     );
 }
 
+const getScheduleCanvas = async (year: string, round: string) => {
+    const data = await getSchedule(year, round);
+
+    if(!data){
+        return null;
+    }
+
+    const buffer = 20;
+    const titleSize = 60;
+    const titleSeparator = 20;
+    const sessionSize = 40;
+    const sessionSeparator = 10;
+
+    const canvasHeight = 
+        buffer + 
+        titleSize + 
+        titleSeparator + 
+        (data.sessions.length * sessionSize) + 
+        (data.sessions.length * sessionSeparator) + 
+        buffer;
+
+    const canvas = Canvas.createCanvas(1250, canvasHeight);
+    const context = canvas.getContext('2d');
+    
+    const background = await Canvas.loadImage("build/images/bg.png");
+    context.drawImage(background, 0, 0, canvas.width, canvas.height);
+
+    const logo = await Canvas.loadImage("build/images/F1-logo.png");
+    context.drawImage(logo, (canvas.width - logo.width - buffer), 0); // There's already a bit of buffer built into the png, ignore it for the y value
+
+    // Draw the title
+    context.fillStyle = '#000000';
+    context.font = `${titleSize}px f1-bold`;
+    context.fillText(data.raceName, 20, buffer + titleSize, 1000);
+
+    const now = new Date();
+    let hasDrawnNextSession = false;
+
+    // Draw the sessions
+    for (let i = 0; i < data.sessions.length; i++) {
+        const session = data.sessions[i];
+        
+        const isFutureSession = session.utcDateTime > now;
+        const isNextSession = isFutureSession && !hasDrawnNextSession;
+
+        // Change the font to bold if it's the next session being drawn
+        if(isNextSession) {
+            context.font = `${sessionSize}px f1-bold`;
+        }
+        else {
+            context.font = `${sessionSize}px f1-reg`;
+        }
+
+        const y = buffer + titleSize + titleSeparator + ((i + 1) * sessionSize) + (i * sessionSeparator);
+
+        // Draw the session name
+        context.fillStyle = '#000000';
+        context.textAlign = 'right';
+        context.fillText(session.sessionName, (canvas.width / 3) - 10, y);
+
+        // Set the font colour to white or red depending on whether the session is the next session                
+        if(isNextSession) {
+            context.fillStyle = '#EE0000';
+        }
+        else {
+            context.fillStyle = '#FFFFFF';
+        }
+
+        //Draw the session times                
+        context.textAlign = 'left';
+        context.fillText(`${dateFormat(session.nzDateTime, "dd/mm HH:MM")} NZL  ${dateFormat(session.sydneyDateTime, "dd/mm HH:MM")} SYD`, (canvas.width / 3) + 10, y);
+
+        // If we've just drawn the next session, update the bool to indicate this so all other sessions are drawn appropriately
+        if(isNextSession) {
+            hasDrawnNextSession = true;
+        }
+    }
+
+    return canvas;
+}
+
 const aest = (date: Date) => {
-    return date.toLocaleString("en-nz", {timeZone: "Australia/Sydney"});
+    return new Date(date.toLocaleString("en", {timeZone: "Australia/Sydney"}));
 }
 
 const nzt = (date: Date) => {
-    return date.toLocaleString("en-nz", {timeZone: "Pacific/Auckland"});
-}
-
-const sessionTimeString = (sessionName: string, date: Date) => {
-    return `${sessionName} is at at: ${aest(date)} AEST, ${nzt(date)} NZT`
+    return new Date(date.toLocaleString("en", {timeZone: "Pacific/Auckland"}));
 }

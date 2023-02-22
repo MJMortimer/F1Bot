@@ -8,20 +8,27 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node build/bot.js",
     "start:dev": "npm run build && node build/bot.js",
-    "build": "rimraf ./build && npm run tsc",
-    "tsc": "tsc"
+    "build": "rimraf ./build && npm run tsc && npm run copy-images && npm run copy-fonts",
+    "copy-images": "copyfiles -u 1 src/images/* build/",
+    "copy-fonts": "copyfiles -u 1 src/fonts/* build/",
+    "tsc": "tsc",
+    "lsall": "ls -alR"
   },
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@types/dateformat": "^5.0.0",
     "@types/jsdom": "^20.0.0",
     "@types/node": "^18.7.13",
     "@types/text-table": "^0.2.2",
+    "copyfiles": "^2.4.1",
     "rimraf": "^3.0.2",
     "typescript": "^4.8.2"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^0.1.30",
     "axios": "^0.27.2",
+    "dateformat": "^5.0.3",
     "discord.js": "^14.3.0",
     "dotenv": "^16.0.1",
     "html-to-image": "^1.10.8",

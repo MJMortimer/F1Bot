@@ -21,31 +21,7 @@ export enum SendOptions {
 
 export const setCommands = (guild: Guild) => {
     console.log("Setting guild commands for", guild.name);
-    guild.commands.set([        
-        {
-            name: F1ScheduleBotCommand.NEXT_RACE,
-            description: "Will tell you when the next race is.",
-            options: [
-                {
-                    name: SendOptions.SENDTOALL,
-                    description: "[OPTIONAL] Should everyone see the response. Defaults to false",
-                    type: ApplicationCommandOptionType.Boolean,
-                    required: false
-                }
-            ]
-        },
-        {
-            name: F1ScheduleBotCommand.NEXT_SESSION,
-            description: "Will tell you when the next session is.",
-            options: [
-                {
-                    name: SendOptions.SENDTOALL,
-                    description: "[OPTIONAL] Should everyone see the response. Defaults to false",
-                    type: ApplicationCommandOptionType.Boolean,
-                    required: false
-                }
-            ]
-        },
+    guild.commands.set([
         {
             name: F1ScheduleBotCommand.SCHEDULE,
             description: "Will tell you when the schedule of an event",
