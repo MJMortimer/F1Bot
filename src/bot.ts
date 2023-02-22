@@ -383,7 +383,7 @@ const getScheduleCanvas = async (year: string, round: string) => {
     // Draw the title
     context.fillStyle = '#000000';
     context.font = `${titleSize}px f1-bold`;
-    context.fillText(data.raceName, 20, buffer + titleSize, 1000);
+    context.fillText(data.raceName, 20, buffer + titleSize);
 
     const now = new Date();
     let hasDrawnNextSession = false;
@@ -500,7 +500,7 @@ const getConstructorStandingsCanvas = async () => {
         context.fillText(`${i + 1}`, 180, entrantY);
 
         context.textAlign = "left";
-        context.fillText(standing.constructor.name, 240, entrantY, 375);
+        context.fillText(standing.constructor.name, 240, entrantY);
 
         context.textAlign = "right";
         context.fillText(standing.points, 755, entrantY);
@@ -580,7 +580,7 @@ const getDriverStandingsCanvas = async () => {
         context.fillText(`${i + 1}`, 180, entrantY);
 
         context.textAlign = "left";
-        context.fillText(standing.driver.name, 240, entrantY, 375);
+        context.fillText(standing.driver.name, 240, entrantY);
 
         context.textAlign = "right";
         context.fillText(standing.points, 755, entrantY);
@@ -661,7 +661,7 @@ const getRaceResultCanvas = async (year: string, round: string) => {
         context.fillText(result.position, 180, entrantY);
 
         context.textAlign = "left";
-        context.fillText(result.driver.name, 240, entrantY, 375);
+        context.fillText(result.driver.name, 240, entrantY);
 
         context.textAlign = "right";
         context.fillText(result.points, 755, entrantY);
