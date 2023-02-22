@@ -38,8 +38,16 @@ client.on('interactionCreate', async (interaction: Interaction) => {
         await commandInteraction.deferReply({ephemeral: !sendToAll});
 
         if(commandInteraction.commandName === F1ScheduleBotCommand.DRIVER_STANDINGS){
-            const driverStandingsTable = await getDriverStandingsTable();
-            await interaction.editReply({content: driverStandingsTable});
+            const canvas = await getDriverStandingsCanvas();
+
+            if(!canvas){
+                await interaction.editReply("Something went wrong");
+                return;
+            }
+
+            const attachment = new AttachmentBuilder(await canvas.encode('png'), { name: 'driverstandings.png' });
+
+            await interaction.editReply({files: [attachment]});
             return;
         }
 
@@ -128,7 +136,7 @@ client.on('interactionCreate', async (interaction: Interaction) => {
         }
 
         if(commandInteraction.commandName === F1ScheduleBotCommand.TEST){
-            const canvas = await getConstructorStandingsCanvas();
+            const canvas = await getDriverStandingsCanvas();
 
             if(!canvas){
                 await interaction.editReply("Something went wrong");
@@ -253,6 +261,7 @@ const getConstructorStandings = async () => {
 
         standings.push({
             points: constructorStanding.points,
+            wins: constructorStanding.wins,
             constructor: {
                 id: constructorStanding.Constructor.constructorId,
                 name: constructorStanding.Constructor.name
@@ -263,23 +272,29 @@ const getConstructorStandings = async () => {
     return standings;
 }
 
-const getDriverStandingsTable = async () => {
+const getDriverStandings = async () => {
     const driverStandings = await api.getCurrentSeasonDriverStandings();
 
-    const tableEntries = [["Pos", "Pts", "Driver"]];
+    if(!driverStandings){
+        return null;
+    }
+
+    const standings = [];
 
     for (let i = 0; i < driverStandings.length; i++) {
         const driverStanding = driverStandings[i];
-        tableEntries.push([driverStanding.position, driverStanding.points, `${driverStanding.Driver.givenName} ${driverStanding.Driver.familyName}`]);
+
+        standings.push({
+            points: driverStanding.points,
+            wins: driverStanding.wins,
+            driver: {
+                id: driverStanding.Driver.driverId,
+                name: `${driverStanding.Driver.givenName} ${driverStanding.Driver.familyName}`
+            }
+        });
     }
 
-    const tableData = table(tableEntries, {align:['r', 'r', 'l']});
-
-    return (
-`\`\`\`
-${tableData}
-\`\`\``
-    );
+    return standings;
 }
 
 const getRaceResultTable = async (year: string, round: string) => {
@@ -441,7 +456,7 @@ const getConstructorStandingsCanvas = async () => {
         (data.length * entrantSeparator) +
         buffer;
 
-    const canvas = Canvas.createCanvas(1000, canvasHeight);
+    const canvas = Canvas.createCanvas(1150, canvasHeight);
     const context = canvas.getContext('2d');
     
     const background = await Canvas.loadImage("build/images/bg.png");
@@ -469,8 +484,7 @@ const getConstructorStandingsCanvas = async () => {
     context.textAlign = "right";
     context.fillText("Pts", 755, headingY);
     context.fillText("Gap", 895, headingY);
-
-    
+    context.fillText("Wins", 1045, headingY);
 
     // Draw the standings
     context.fillStyle = '#FFFFFF';
@@ -491,6 +505,87 @@ const getConstructorStandingsCanvas = async () => {
         context.textAlign = "right";
         context.fillText(standing.points, 755, entrantY);
         context.fillText(pointGap, 895, entrantY);
+        context.fillText(standing.wins, 1045, entrantY);
+    }
+
+    return canvas;
+}
+
+const getDriverStandingsCanvas = async () => {
+    const data = await getDriverStandings();
+
+    if(!data){
+        return null;
+    }
+
+    const buffer = 20;
+    const titleSize = 50;
+    const titleSeparator = 20;
+    const headingSize = 40;
+    const headingSeparator = 15;
+    const entrantSize = 30;
+    const entrantSeparator = 10;
+
+    const canvasHeight = 
+        buffer +
+        titleSize +
+        titleSeparator +
+        headingSize +
+        headingSeparator +
+        (data.length * entrantSize) +
+        (data.length * entrantSeparator) +
+        buffer;
+
+    const canvas = Canvas.createCanvas(1150, canvasHeight);
+    const context = canvas.getContext('2d');
+    
+    const background = await Canvas.loadImage("build/images/bg.png");
+    context.drawImage(background, 0, 0, canvas.width, canvas.height);
+
+    const logo = await Canvas.loadImage("build/images/F1-logo.png");
+    context.drawImage(logo, (canvas.width - logo.width - buffer), 0); // There's already a bit of buffer built into the png, ignore it for the y value
+
+    // Draw the title
+    context.fillStyle = '#000000';
+    context.font = `${titleSize}px f1-bold`;
+    context.fillText("Driver standings", 20, buffer + titleSize);
+
+    const headingY = buffer + titleSize + titleSeparator + headingSize;
+
+    // Draw the headings
+    context.font = `${headingSize}px f1-bold`;
+
+    context.textAlign = "right";
+    context.fillText("Pos", 180, headingY);
+
+    context.textAlign = "left";
+    context.fillText("Constructor", 240, headingY);
+
+    context.textAlign = "right";
+    context.fillText("Pts", 755, headingY);
+    context.fillText("Gap", 895, headingY);
+    context.fillText("Wins", 1045, headingY);
+
+    // Draw the standings
+    context.fillStyle = '#FFFFFF';
+    context.font = `${headingSize}px f1-reg`;
+    
+    for (let i = 0; i < data.length; i++) {
+        const standing = data[i];
+        const pointGap = i === 0 ? "- - -" : `${data[i - 1].points - data[i].points}`;
+
+        const entrantY = buffer + titleSize + titleSeparator + headingSize + headingSeparator + ((i + 1) * entrantSize) + (i * entrantSeparator);
+
+        context.textAlign = "right";
+        context.fillText(`${i + 1}`, 180, entrantY);
+
+        context.textAlign = "left";
+        context.fillText(standing.driver.name, 240, entrantY, 375);
+
+        context.textAlign = "right";
+        context.fillText(standing.points, 755, entrantY);
+        context.fillText(pointGap, 895, entrantY);
+        context.fillText(standing.wins, 1045, entrantY);
     }
 
     return canvas;
